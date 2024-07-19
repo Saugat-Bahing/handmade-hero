@@ -1,27 +1,51 @@
 #include <windows.h>
 
+#define  local_persist static
+#define  global_variable static
+#define  internal static
 
-//typedef struct tagWNDCLASSA {
-//  UINT      style; --> set of binary flags. Prop of window UINT -> unsigned int 32bit
-//  WNDPROC   lpfnWndProc; -> pointer to a function that we define how window handle events
-//  int       cbClsExtra; -> custom bytes
-//  int       cbWndExtra; -> custom memory
-//  HINSTANCE hInstance; -> which instance is handling the window -> hInstance | get from kernal getModuleHandle(0)
-//  HICON     hIcon; -> game icon
-//  HCURSOR   hCursor; -> windows cursor
-//  HBRUSH    hbrBackground; -> background color
-//  LPCSTR    lpszMenuName; -> menubar
-//  LPCSTR    lpszClassName; -> name for windowclass
-//} WNDCLASSA, *PWNDCLASSA, *NPWNDCLASSA, *LPWNDCLASSA;
+// TODO: This is a global for now.
+global_variable bool Running;
+global_variable BITMAPINFO BitmapInfo;
+global_variable void *BitmapMemory;
 
-// HWND -> handle to a window
-// Message -> window messages
+//device independent bitmap
+internal void
+Win32ResizeDIBSection(int Width, int Height)
+{
+	// TODO: Bulletproof this
+	// Maybe dont't free first. free after, then free first if that fails.
+	if(BitmapMemory)
+	{
+		VirtualFree(BitmapMemory, 0, MEM_RELEASE);
+	}
 
-LRESULT CALLBACK MainWindowCallback(
-  HWND Window,
-  UINT Message,
-  WPARAM WParam,
-  LPARAM LParam
+	BitmapInfo.bmiHeader.biSize = sizeof(BitmapInfo.bmiHeader);
+	BitmapInfo.bmiHeader.biWidth = Width;
+	BitmapInfo.bmiHeader.biHeight = Height;
+	BitmapInfo.bmiHeader.biPlanes = 1;
+	BitmapInfo.bmiHeader.biBitCount = 32;
+	BitmapInfo.bmiHeader.biCompression = BI_RGB;
+
+	int BytesPerPixcel = 4;
+	int BitmapMemorySize = (Width*Height)*BytesPerPixcel;
+	BitmapMemory = VirtualAlloc(0, BitmapMemorySize, MEM_COMMIT, PAGE_READWRITE);
+
+}
+
+internal void
+Win32UpdateWindow(HDC DeviceContext, int X, int Y, int Width, int Height)
+{
+	StretchDIBits(DeviceContext, X, Y, Width, Height, X, Y, Width, Height, BitmapMemory, &BitmapInfo, DIB_RGB_COLORS, SRCCOPY);	
+}
+
+
+LRESULT CALLBACK 
+Win32MainWindowCallback(
+	HWND Window,
+	UINT Message,
+	WPARAM WParam,
+	LPARAM LParam
 )
 {
 	LRESULT Result = 0;
@@ -29,15 +53,23 @@ LRESULT CALLBACK MainWindowCallback(
 	{
 		case WM_SIZE:
 			{
-				OutputDebugStringA("WM_SIZE\n");
+				RECT ClientRect;
+				GetClientRect(Window, &ClientRect);
+				int Width = ClientRect.right  - ClientRect.left;
+				int Height = ClientRect.top = ClientRect.bottom;
+				Win32ResizeDIBSection(Width, Height);
 			} break;
 		case WM_DESTROY:
 			{
+				Running = false;
 				OutputDebugStringA("WM_DESTROY\n");
 			} break;
 		case WM_CLOSE:
 			{
-				OutputDebugStringA("WM_CLOSE\n");
+				// TODO: Handle this with a message to the user?
+				Running = false;
+				// PostQuitMessage(0);
+				// OutputDebugStringA("WM_CLOSE\n");
 			} break;
 		case WM_ACTIVATEAPP:
 			{
@@ -51,16 +83,8 @@ LRESULT CALLBACK MainWindowCallback(
 				int Y = Paint.rcPaint.top;
 				int Height = Paint.rcPaint.bottom - Paint.rcPaint.top;
 				int Width = Paint.rcPaint.right - Paint.rcPaint.left;
-				static DWORD Operation = WHITENESS;
-				PatBlt(DeviceContext, X, Y, Width, Height, Operation);
-				if(Operation == WHITENESS){
-					Operation = BLACKNESS;
-				}
-				else {
-					Operation = WHITENESS;
-				}
+				Win32UpdateWindow(DeviceContext, X, Y, Width, Height);
 				EndPaint(Window, &Paint);
-
 			} break;
 		default:
 			{
@@ -76,11 +100,9 @@ WinMain(HINSTANCE Instance,
 		LPSTR CommandLine,
 		int ShowCode)
 {
-	// MessageBox(0, "This is handmade hero.", "HandmadeHero", MB_OK|MB_ICONINFORMATION);
-	WNDCLASS WindowClass = {};
+	WNDCLASSA WindowClass = {};
 	// TODO: Check if CS_HREDRAW CS_VREDRAW is really needed.
-	WindowClass.style = CS_OWNDC|CS_HREDRAW|CS_VREDRAW;
-	WindowClass.lpfnWndProc = MainWindowCallback;
+	WindowClass.lpfnWndProc = Win32MainWindowCallback;
 	WindowClass.hInstance = Instance;
 	WindowClass.lpszClassName = "HandmadeHeroWindowClass";
 	if(RegisterClass(&WindowClass))
@@ -102,13 +124,14 @@ WinMain(HINSTANCE Instance,
 		if(WindowHandle)
 		{
 			MSG Message;
-			for(;;)
+			Running = true;	
+			while(Running)
 			{
-				BOOL MessageResult = GetMessage(&Message, 0, 0, 0);
+				BOOL MessageResult = GetMessageA(&Message, 0, 0, 0);
 				if(MessageResult > 0)
 				{
 					TranslateMessage(&Message);
-					DispatchMessage(&Message);
+					DispatchMessageA(&Message);
 				}
 				else
 				{
